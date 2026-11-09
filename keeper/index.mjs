@@ -1,0 +1,175 @@
+// Keeper (cron) for SqueekPredict.
+// Handles: round start, round end + reward distribution (finalize), and emergency cancel.
+// - Livestream ends mid-round  -> markLivestreamEnded() + finalize early.
+// - SqueekCore paused          -> cancelRound().
+// - Timer done (settle window) -> finalize(); window passed -> cancelRound().
+// startRound()/finalize() are permissionless on-chain; this bot exists for liveness + off-chain signals.
+import { createPublicClient, createWalletClient, http, parseAbi } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import 'dotenv/config';
+
+const RPC_URL = process.env.RPC_URL;
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const PREDICT_ADDRESS = process.env.PREDICT_ADDRESS;
+const CORE_ADDRESS = process.env.CORE_ADDRESS;
+const POLL_MS = Number(process.env.POLL_MS || 2000);
+const STREAM_STATUS_URL = process.env.STREAM_STATUS_URL || 'https://media.squeekchain.com/live/current.json';
+const STREAM_CHECK_SECONDS = Number(process.env.STREAM_CHECK_SECONDS || 15);
+
+for (const [k, v] of Object.entries({ RPC_URL, PRIVATE_KEY, PREDICT_ADDRESS, CORE_ADDRESS })) {
+  if (!v) throw new Error(`Missing env: ${k}`);
+}
+
+const account = privateKeyToAccount(PRIVATE_KEY);
+const publicClient = createPublicClient({ transport: http(RPC_URL) });
+const walletClient = createWalletClient({ account, transport: http(RPC_URL) });
+
+// Unnamed tuple components -> viem returns plain arrays (positional).
+const predictAbi = parseAbi([
+  'function currentRoundId() view returns (uint256)',
+  'function gamePaused() view returns (bool)',
+  'function keeper() view returns (address)',
+  'function gracePeriod() view returns (uint256)',
+  'function settleWindow() view returns (uint256)',
+  'function getRound(uint256) view returns ((uint256,uint256,uint256,uint64,uint64,uint256,uint256,uint8))',
+  'function startRound()',
+  'function finalize(uint256 roundId)',
+  'function cancelRound(uint256 roundId)',
+  'function markLivestreamEnded()',
+]);
+
+const coreAbi = parseAbi([
+  'function state() view returns ((uint64,uint64,uint96,uint64,uint96,uint32,uint256,bool))',
+]);
+
+const P = { address: PREDICT_ADDRESS, abi: predictAbi };
+const C = { address: CORE_ADDRESS, abi: coreAbi };
+
+async function sendAndWait(fn) {
+  try {
+    const hash = await fn();
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status === 'reverted') {
+      console.error('  tx reverted:', receipt.transactionHash);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('  write failed:', e.shortMessage || e.message);
+    return false;
+  }
+}
+
+let lastStreamCheck = 0;
+let cachedStreamLive = true;
+
+// Off-chain "is the livestream still live?" check.
+// Defaults to SqueekChain's public live descriptor ({"state":"live", "validUntil": ...}).
+async function isStreamLive() {
+  const nowMs = Date.now();
+  if (nowMs - lastStreamCheck < STREAM_CHECK_SECONDS * 1000) return cachedStreamLive;
+  lastStreamCheck = nowMs;
+  try {
+    const res = await fetch(STREAM_STATUS_URL, {
+      signal: AbortSignal.timeout(5000),
+      headers: { Accept: 'application/json', Origin: 'https://squeekchain.com' },
+    });
+    if (!res.ok) {
+      cachedStreamLive = false; // 404 => not live
+      return false;
+    }
+    const d = await res.json();
+    const until = d.validUntil ? Date.parse(d.validUntil) : NaN;
+    const live = d.state === 'live' && Number.isFinite(until) && until > Date.now();
+    cachedStreamLive = live;
+    return live;
+  } catch {
+    cachedStreamLive = true; // on error assume live (avoid false early finalize)
+    return cachedStreamLive;
+  }
+}
+
+async function tick() {
+  const [roundId, gamePaused, keeperAddr, gracePeriod, settleWindow] = await Promise.all([
+    publicClient.readContract({ ...P, functionName: 'currentRoundId' }),
+    publicClient.readContract({ ...P, functionName: 'gamePaused' }),
+    publicClient.readContract({ ...P, functionName: 'keeper' }),
+    publicClient.readContract({ ...P, functionName: 'gracePeriod' }),
+    publicClient.readContract({ ...P, functionName: 'settleWindow' }),
+  ]);
+
+  if (keeperAddr.toLowerCase() !== account.address.toLowerCase()) {
+    console.log(`[${new Date().toISOString()}] not keeper (keeper=${keeperAddr})`);
+    return;
+  }
+  if (gamePaused) {
+    console.log(`[${new Date().toISOString()}] game paused, skipping`);
+    return;
+  }
+
+  const coreState = await publicClient.readContract({ ...C, functionName: 'state' });
+  const height = coreState[3]; // blockHeight
+  const corePaused = coreState[7]; // paused
+  const now = BigInt(Math.floor(Date.now() / 1000));
+
+  const start = () => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'startRound' }));
+  const finalize = (id) => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'finalize', args: [id] }));
+  const cancel = (id) => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'cancelRound', args: [id] }));
+  const markEnded = () => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'markLivestreamEnded' }));
+
+  if (roundId === 0n) {
+    console.log(`[${new Date().toISOString()}] height=${height} -> startRound (first)`);
+    await start();
+    return;
+  }
+
+  const round = await publicClient.readContract({ ...P, functionName: 'getRound', args: [roundId] });
+  const status = round[7];
+  const endTime = round[4];
+
+  if (status === 1) {
+    // Betting
+    if (corePaused) {
+      console.log(`[${new Date().toISOString()}] height=${height} corePaused -> cancelRound(${roundId})`);
+      await cancel(roundId);
+    } else if (!(await isStreamLive())) {
+      console.log(`[${new Date().toISOString()}] height=${height} livestream ended -> markLivestreamEnded + finalize(${roundId})`);
+      await markEnded();
+      const ok = await finalize(roundId);
+      if (ok) {
+        console.log(`[${new Date().toISOString()}] -> startRound (next)`);
+        await start();
+      }
+    } else if (now >= endTime + gracePeriod && now <= endTime + gracePeriod + settleWindow) {
+      console.log(`[${new Date().toISOString()}] height=${height} round ${roundId} timer done -> finalize`);
+      const ok = await finalize(roundId);
+      if (ok) {
+        console.log(`[${new Date().toISOString()}] -> startRound (next)`);
+        await start();
+      }
+    } else if (now > endTime + gracePeriod + settleWindow) {
+      console.log(`[${new Date().toISOString()}] round ${roundId} settle window passed -> cancelRound`);
+      await cancel(roundId);
+    }
+    // else: stream live, blocks may be stalled -> wait for the full timer
+  } else {
+    // Finalized (2) or Cancelled (3): open the next round
+    console.log(`[${new Date().toISOString()}] round ${roundId} status=${status} -> startRound`);
+    await start();
+  }
+}
+
+async function loop() {
+  try {
+    await tick();
+  } catch (e) {
+    console.error('[keeper] tick error:', e.shortMessage || e.message);
+  }
+  setTimeout(loop, POLL_MS);
+}
+
+console.log(
+  `[keeper] starting account=${account.address} predict=${PREDICT_ADDRESS} core=${CORE_ADDRESS} poll=${POLL_MS}ms stream=${STREAM_STATUS_URL || '(none)'}`,
+);
+loop();
+
