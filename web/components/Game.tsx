@@ -160,11 +160,11 @@ export default function Game() {
   // leaves the UI showing time remaining while the contract has already
   // closed betting ("Betting closed").
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
-  const clockOffsetRef = useRef(0);
+  const clockOffsetRef = useRef<number | null>(null);
 
   useEffect(() => {
     const id = setInterval(() => {
-      setNow(Math.floor(Date.now() / 1000) + clockOffsetRef.current);
+      setNow(Math.floor(Date.now() / 1000) + (clockOffsetRef.current ?? 0));
     }, 1000);
     return () => clearInterval(id);
   }, []);
@@ -202,8 +202,14 @@ export default function Game() {
         publicClient.getBlock({ blockTag: 'latest' }),
       ]);
 
-      // Keep the visible countdown synced to the chain clock.
-      clockOffsetRef.current = Number(block.timestamp) - Math.floor(Date.now() / 1000);
+      // Measure the device↔chain clock offset once (first successful poll) and
+      // keep it fixed so the countdown ticks smoothly. Sepolia block.timestamp
+      // is quantized to ~12s blocks, so re-measuring it every poll made the
+      // timer jump back and forth. A single measurement is stable and accurate
+      // to within a block (~12s).
+      if (clockOffsetRef.current === null) {
+        clockOffsetRef.current = Number(block.timestamp) - Math.floor(Date.now() / 1000);
+      }
 
       setBlocksSoFar(bsf);
       setRoundId(cid);
