@@ -1,10 +1,9 @@
 # SqueekPredict Keeper
 
-A Node cron loop that drives the `SqueekPredict` contract lifecycle. `startRound()` and `finalize()` are **permissionless** on-chain, so this bot exists for **liveness** + off-chain signals. The bot holds the `keeper` role so it can **mark the livestream ended** (which closes betting and enables early finalize) and **cancel** when SqueekCore pauses.
+A Node cron loop that drives the `SqueekPredict` contract lifecycle. `startRound()` and `finalize()` are **permissionless** on-chain, so this bot exists for **liveness** + off-chain signals. It only **starts rounds while a livestream is live** (via the Squeekchain live descriptor), and it **cancels** when SqueekCore pauses.
 
-- **Round start** → `startRound()`
-- **Livestream ends** → `markLivestreamEnded()` + `finalize()` early (resolve with the frozen height)
-- **Timer done** → `finalize()` in the settle window (commits tiered rewards; winners claim via `claim()`)
+- **No live stream** → do not start a new round (pause); resumes automatically within ~15s of the stream going live
+- **Timer done** → `finalize()` in the settle window, then start the next round (only if a stream is live)
 - **SqueekCore paused** → `cancelRound()`
 - **Settle window passed** → `cancelRound()` (expired fallback)
 

@@ -220,11 +220,14 @@ async function tick() {
   const start = () => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'startRound' }));
   const finalize = (id) => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'finalize', args: [id] }));
   const cancel = (id) => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'cancelRound', args: [id] }));
-  const markEnded = () => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'markLivestreamEnded' }));
 
   if (roundId === 0n) {
-    console.log(`[${new Date().toISOString()}] height=${height} -> startRound (first)`);
-    await start();
+    if (await isStreamLive()) {
+      console.log(`[${new Date().toISOString()}] height=${height} -> startRound (first)`);
+      await start();
+    } else {
+      console.log(`[${new Date().toISOString()}] no live stream -> waiting to start first round`);
+    }
     return;
   }
 
@@ -237,18 +240,10 @@ async function tick() {
     if (corePaused) {
       console.log(`[${new Date().toISOString()}] height=${height} corePaused -> cancelRound(${roundId})`);
       await cancel(roundId);
-    } else if (!(await isStreamLive())) {
-      console.log(`[${new Date().toISOString()}] height=${height} livestream ended -> markLivestreamEnded + finalize(${roundId})`);
-      await markEnded();
-      const ok = await finalize(roundId);
-      if (ok) {
-        console.log(`[${new Date().toISOString()}] -> startRound (next)`);
-        await start();
-      }
     } else if (now >= endTime + gracePeriod && now <= endTime + gracePeriod + settleWindow) {
       console.log(`[${new Date().toISOString()}] height=${height} round ${roundId} timer done -> finalize`);
       const ok = await finalize(roundId);
-      if (ok) {
+      if (ok && (await isStreamLive())) {
         console.log(`[${new Date().toISOString()}] -> startRound (next)`);
         await start();
       }
@@ -256,11 +251,15 @@ async function tick() {
       console.log(`[${new Date().toISOString()}] round ${roundId} settle window passed -> cancelRound`);
       await cancel(roundId);
     }
-    // else: stream live, blocks may be stalled -> wait for the full timer
+    // else: wait for the full timer; only start the next round if a stream is live
   } else {
-    // Finalized (2) or Cancelled (3): open the next round
-    console.log(`[${new Date().toISOString()}] round ${roundId} status=${status} -> startRound`);
-    await start();
+    // Finalized (2) or Cancelled (3): open the next round only if a stream is live
+    if (await isStreamLive()) {
+      console.log(`[${new Date().toISOString()}] round ${roundId} status=${status} -> startRound`);
+      await start();
+    } else {
+      console.log(`[${new Date().toISOString()}] round ${roundId} status=${status} -> no live stream, paused`);
+    }
   }
 
   // Refresh the history cache whenever a round starts or ends.
