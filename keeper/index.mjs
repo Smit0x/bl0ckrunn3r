@@ -6,7 +6,14 @@
 // startRound()/finalize() are permissionless on-chain; this bot exists for liveness + off-chain signals.
 import { createPublicClient, createWalletClient, http, parseAbi } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { readFileSync, writeFileSync, renameSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import 'dotenv/config';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const HISTORY_FILE = join(__dirname, 'history.json');
+const HISTORY_LIMIT = 20;
 
 const RPC_URL = process.env.RPC_URL;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
@@ -60,6 +67,40 @@ async function sendAndWait(fn) {
   }
 }
 
+// ---- round history cache (latest 20 rounds, written to history.json) ----
+function saveHistory(rows) {
+  const tmp = `${HISTORY_FILE}.tmp`;
+  writeFileSync(tmp, JSON.stringify(rows));
+  renameSync(tmp, HISTORY_FILE);
+}
+
+let lastHistoryRoundId = null;
+let lastHistoryStatus = null;
+
+async function refreshHistory(roundId) {
+  const count = Math.min(Number(roundId), HISTORY_LIMIT);
+  const start = Math.max(1, Number(roundId) - count + 1);
+  const rows = [];
+  for (let i = Number(roundId); i >= start; i--) {
+    try {
+      const r = await publicClient.readContract({ ...P, functionName: 'getRound', args: [BigInt(i)] });
+      rows.push({ id: i, startHeight: Number(r[0]), endHeight: Number(r[1]), result: Number(r[2]), status: r[7] });
+    } catch {
+      // skip unreadable rounds
+    }
+  }
+  rows.reverse(); // oldest -> newest
+  saveHistory(rows);
+  console.log(`[${new Date().toISOString()}] history updated (${rows.length} rounds)`);
+}
+
+async function maybeRefreshHistory(roundId, status) {
+  if (roundId === lastHistoryRoundId && status === lastHistoryStatus) return;
+  lastHistoryRoundId = roundId;
+  lastHistoryStatus = status;
+  await refreshHistory(roundId);
+}
+
 let lastStreamCheck = 0;
 let cachedStreamLive = true;
 
@@ -107,10 +148,16 @@ async function tick() {
     return;
   }
 
-  const coreState = await publicClient.readContract({ ...C, functionName: 'state' });
+  const [coreState, block] = await Promise.all([
+    publicClient.readContract({ ...C, functionName: 'state' }),
+    publicClient.getBlock({ blockTag: 'latest' }),
+  ]);
   const height = coreState[3]; // blockHeight
   const corePaused = coreState[7]; // paused
-  const now = BigInt(Math.floor(Date.now() / 1000));
+  // Use the chain's clock (block.timestamp) so settle timing tracks the same
+  // clock the contract's `require(block.timestamp ...)` checks use, regardless
+  // of how much the VPS clock drifts from the chain.
+  const now = block.timestamp;
 
   const start = () => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'startRound' }));
   const finalize = (id) => sendAndWait(() => walletClient.writeContract({ ...P, functionName: 'finalize', args: [id] }));
@@ -157,6 +204,9 @@ async function tick() {
     console.log(`[${new Date().toISOString()}] round ${roundId} status=${status} -> startRound`);
     await start();
   }
+
+  // Refresh the history cache whenever a round starts or ends.
+  await maybeRefreshHistory(roundId, status);
 }
 
 async function loop() {

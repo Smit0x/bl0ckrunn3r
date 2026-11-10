@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import type { Round } from '../lib/contracts';
 
 export default function Controls({
   round,
   roundId,
   gracePeriod,
+  now,
   isOwner,
   busy,
   canBet,
@@ -19,6 +19,7 @@ export default function Controls({
   round: Round | null;
   roundId: bigint;
   gracePeriod?: bigint;
+  now: number;
   isOwner: boolean;
   busy: boolean;
   canBet: boolean;
@@ -28,13 +29,6 @@ export default function Controls({
   onFinalize: () => void;
   onCancel: () => void;
 }) {
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
-    return () => clearInterval(id);
-  }, []);
-
   const finalizeIn =
     round && round.status === 1 ? Math.max(0, Number(round.endTime + (gracePeriod ?? 0n) - BigInt(now))) : 0;
   const canFinalize = round?.status === 1 && finalizeIn === 0;

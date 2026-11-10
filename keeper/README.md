@@ -41,6 +41,7 @@ node index.mjs
 | `POLL_MS` | Loop interval (default 2000) |
 | `STREAM_STATUS_URL` | Livestream status endpoint (defaults to SqueekChain's `https://media.squeekchain.com/live/current.json`) |
 | `STREAM_CHECK_SECONDS` | How often to re-check the stream status (default 15) |
+| `API_PORT` | Port for the read-only history API (default 3001) |
 
 ## Run 24/7 (cloud)
 
@@ -57,5 +58,14 @@ npm install -g pm2
 pm2 start ecosystem.config.cjs
 pm2 save && pm2 startup
 ```
+
+## History API (read-only cache)
+
+The keeper writes `history.json` (the latest 20 rounds) every time a round starts or ends. A tiny HTTP server (`api.mjs`, run by PM2 as `squeek-history-api`) serves it:
+
+- `GET /history` → JSON array of the latest 20 rounds: `[{ "id", "startHeight", "endHeight", "result", "status" }]`
+- `GET /health` → `ok`
+
+Only the keeper hits the RPC. The web app's `/api/history` route (Vercel) proxies to `GET http://<vps-ip>:3001/history`, so user browsers never touch the RPC directly. Open TCP port `3001` in the VPS firewall, and set `HISTORY_API_URL=http://<vps-ip>:3001` (server-only, no `NEXT_PUBLIC_` prefix) in Vercel.
 
 

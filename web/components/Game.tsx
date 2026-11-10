@@ -22,6 +22,14 @@ import type { ToastData } from './Toast';
 import hamsterGlasses from '../images/hamster_glasses_papers.png';
 import loadingGif from '../images/loading.gif';
 
+type HistoryRow = {
+  id: number;
+  startHeight: number;
+  endHeight: number;
+  result: number;
+  status: number;
+};
+
 const DISCLAIMER_KEY = 'blockrunner.disclaimer.dismissed';
 const GUIDE_KEY = 'blockrunner.guide.dismissed';
 
@@ -46,7 +54,7 @@ export default function Game() {
   const [owner, setOwner] = useState('');
   const [maxNumber, setMaxNumber] = useState(100n);
   const [numberInfo, setNumberInfo] = useState<Record<string, NumberInfo>>({});
-  const [history, setHistory] = useState<{ id: number; round: Round }[]>([]);
+  const [history, setHistory] = useState<HistoryRow[]>([]);
   const [betOpen, setBetOpen] = useState(false);
   const [betNumber, setBetNumber] = useState<bigint | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -147,10 +155,17 @@ export default function Game() {
     celebrateTimer.current = setTimeout(() => setCelebrate(false), 3500);
   }, []);
 
+  // The countdown must track the chain's clock (block.timestamp), not the
+  // device clock. Sepolia can drift ~100s from real time, which otherwise
+  // leaves the UI showing time remaining while the contract has already
+  // closed betting ("Betting closed").
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const clockOffsetRef = useRef(0);
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    const id = setInterval(() => {
+      setNow(Math.floor(Date.now() / 1000) + clockOffsetRef.current);
+    }, 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -177,14 +192,18 @@ export default function Game() {
   const poll = useCallback(async () => {
     if (!isConfigured) return;
     try {
-      const [bsf, cid, paused, grace, own, maxN] = await Promise.all([
+      const [bsf, cid, paused, grace, own, maxN, block] = await Promise.all([
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'blocksProducedSoFar' }),
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'currentRoundId' }),
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'gamePaused' }),
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'gracePeriod' }),
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'owner' }),
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'maxBetSpan' }),
+        publicClient.getBlock({ blockTag: 'latest' }),
       ]);
+
+      // Keep the visible countdown synced to the chain clock.
+      clockOffsetRef.current = Number(block.timestamp) - Math.floor(Date.now() / 1000);
 
       setBlocksSoFar(bsf);
       setRoundId(cid);
@@ -232,40 +251,24 @@ export default function Game() {
     return () => clearInterval(id);
   }, [poll]);
 
-  // Load recent round history (last 20 rounds) whenever the round changes.
+  // Load recent round history from the keeper's history API.
   useEffect(() => {
-    if (!isConfigured || roundId === 0n) return;
+    if (roundId === 0n) return;
     let cancelled = false;
     (async () => {
-      const count = Math.min(Number(roundId), 20);
-      const start = Math.max(1, Number(roundId) - count + 1);
-      const items: { id: number; round: Round }[] = [];
-      for (let i = Number(roundId); i >= start; i--) {
-        try {
-          const r = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'getRound', args: [BigInt(i)] });
-          items.push({
-            id: i,
-            round: {
-              startHeight: r[0],
-              endHeight: r[1],
-              result: r[2],
-              startTime: r[3],
-              endTime: r[4],
-              pot: r[5],
-              totalUserStake: r[6],
-              status: r[7],
-            },
-          });
-        } catch {
-          // skip unreadable rounds
-        }
+      try {
+        const res = await fetch('/api/history', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = (await res.json()) as HistoryRow[];
+        if (!cancelled) setHistory(data);
+      } catch {
+        // ignore
       }
-      if (!cancelled) setHistory(items);
     })();
     return () => {
       cancelled = true;
     };
-  }, [roundId, isConfigured]);
+  }, [roundId]);
 
   const run = useCallback(async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -566,6 +569,7 @@ export default function Game() {
         round={round}
         roundId={roundId}
         gracePeriod={gracePeriod}
+        now={now}
         isOwner={isOwner}
         busy={busy}
         canBet={canBet}
@@ -589,12 +593,12 @@ export default function Game() {
               </tr>
             </thead>
             <tbody>
-              {history.map(({ id, round: r }) => (
-                <tr key={id}>
-                  <td>{id}</td>
-                  <td>{r.startHeight.toString()}</td>
-                  <td>{r.status === 2 ? r.endHeight.toString() : '—'}</td>
-                  <td>{r.status === 2 ? r.result.toString() : '—'}</td>
+              {history.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.id}</td>
+                  <td>{r.startHeight}</td>
+                  <td>{r.status === 2 ? r.endHeight : '—'}</td>
+                  <td>{r.status === 2 ? r.result : '—'}</td>
                   <td className={r.status === 2 ? 'status-finalized' : r.status === 3 ? 'status-cancelled' : 'status-betting'}>
                     {r.status === 2 ? 'Finalized' : r.status === 3 ? 'Cancelled' : 'Betting'}
                   </td>
