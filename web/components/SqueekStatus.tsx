@@ -32,7 +32,12 @@ export default function SqueekStatus() {
   if (!status) return null;
 
   const state = stateOf(status);
-  const height = status.projectedBlockHeight ?? status.blockHeight;
+  // The game (and the ladder) settle on SqueekCore's frontier blockHeight, not
+  // the optimistic/projected height, so show settled as the primary number and
+  // surface the live projected height separately when it differs.
+  const settled = status.blockHeight;
+  const projected = status.projectedBlockHeight;
+  const height = settled ?? projected;
   const rpm = status.rpmMilli != null ? (status.rpmMilli / 1000).toFixed(1) : null;
 
   const label =
@@ -43,7 +48,10 @@ export default function SqueekStatus() {
     <div className={`squeek-status ${state}`}>
       <span className={`live-dot${dotClass}`} aria-hidden="true" />
       <span className="squeek-status-label">{label}</span>
-      {height != null && <span className="squeek-status-metric">block {height.toString()}</span>}
+      {height != null && <span className="squeek-status-metric">settled {height.toString()}</span>}
+      {settled != null && projected != null && projected !== settled && (
+        <span className="squeek-status-metric">live {projected.toString()}</span>
+      )}
       {state === 'live' && rpm && <span className="squeek-status-metric">{rpm} RPM</span>}
     </div>
   );
