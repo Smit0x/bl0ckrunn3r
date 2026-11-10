@@ -10,6 +10,7 @@ export default function Controls({
   isOwner,
   busy,
   canBet,
+  claimableCount,
   onBet,
   onClaim,
   onStart,
@@ -23,6 +24,7 @@ export default function Controls({
   isOwner: boolean;
   busy: boolean;
   canBet: boolean;
+  claimableCount: number;
   onBet: () => void;
   onClaim: () => void;
   onStart: () => void;
@@ -39,9 +41,9 @@ export default function Controls({
         BET
       </button>
 
-      {round?.status === 2 && (
+      {claimableCount > 0 && (
         <button className="bet-cta" disabled={busy} onClick={onClaim}>
-          Claim winnings
+          Claim winnings ({claimableCount})
         </button>
       )}
 

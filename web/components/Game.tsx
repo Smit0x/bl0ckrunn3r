@@ -444,6 +444,12 @@ export default function Game() {
     setClaimItems(items);
   }, [address, roundId]);
 
+  // Refresh the claim list whenever the wallet or round changes, so the
+  // "Claim winnings" button only shows when there's something to claim.
+  useEffect(() => {
+    loadClaimRounds();
+  }, [loadClaimRounds]);
+
   const openClaimModal = useCallback(async () => {
     if (!authenticated || !address) {
       pushMessage('Log in first');
@@ -573,6 +579,7 @@ export default function Game() {
         isOwner={isOwner}
         busy={busy}
         canBet={canBet}
+        claimableCount={claimItems.length}
         onBet={openBet}
         onClaim={openClaimModal}
         onStart={() => ownerAction('startRound')}
