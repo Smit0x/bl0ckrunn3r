@@ -35,7 +35,16 @@ export default function LiveStream() {
     };
   }, []);
 
-  if (!live?.live) return null;
+  if (!live?.live) {
+    return (
+      <section className="live-stream live-stream-offline" aria-label="Live video unavailable">
+        <div className="live-stream-head">
+          <span className="live-dot" aria-hidden="true" />
+          <span>LIVE VIDEO NOT AVAILABLE</span>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="live-stream" aria-label="Squeekchain live video">

@@ -16,6 +16,7 @@ import DisclaimerModal from './DisclaimerModal';
 import Guide from './Guide';
 import GuideIntro from './GuideIntro';
 import LiveStream from './LiveStream';
+import OffchainGame from './OffchainGame';
 import Toasts from './Toasts';
 import type { ToastData } from './Toast';
 import hamsterGlasses from '../images/hamster_glasses_papers.png';
@@ -69,6 +70,7 @@ export default function Game() {
   const [toasts, setToasts] = useState<ToastData[]>([]);
   const toastId = useRef(0);
   const signerRef = useRef(false);
+  const [mode, setMode] = useState<'onchain' | 'offchain'>('onchain');
 
   const maybeShowGuideIntro = useCallback(() => {
     try {
@@ -478,6 +480,26 @@ export default function Game() {
     [authenticated, address, run, sendTx, loadClaimRounds, pushMessage],
   );
 
+  if (mode === 'offchain') {
+    return (
+      <main className="game">
+        <Header
+          authenticated={false}
+          needsWallet={false}
+          creatingWallet={false}
+          onLogin={login}
+          onLogout={logout}
+          onCreateWallet={handleCreateWallet}
+          onOpenWallet={() => setWalletOpen(true)}
+          onOpenGuide={openGuide}
+          mode={mode}
+          onToggleMode={() => setMode('onchain')}
+        />
+        <OffchainGame />
+      </main>
+    );
+  }
+
   if (!ready)
     return (
       <div className="loading">
@@ -513,6 +535,8 @@ export default function Game() {
         onCreateWallet={handleCreateWallet}
         onOpenWallet={() => setWalletOpen(true)}
         onOpenGuide={openGuide}
+        mode={mode}
+        onToggleMode={() => setMode('offchain')}
       />
 
       <div className="ladder-head">

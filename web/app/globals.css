@@ -1503,3 +1503,48 @@ button.active {
 .status-betting {
   color: var(--warn);
 }
+
+/* ---- offchain demo ---- */
+.offchain-badge {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.balance-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 12px;
+  padding: 8px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.reset-btn {
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+.claimed {
+  align-self: center;
+  font-weight: 700;
+  color: var(--green);
+}
+
+.live-stream-offline .live-dot {
+  animation: none;
+  background: var(--muted);
+}
+
+.live-stream-offline .live-stream-head {
+  color: var(--muted);
+}

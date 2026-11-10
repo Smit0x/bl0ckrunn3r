@@ -20,6 +20,8 @@ export default function Header({
   onCreateWallet,
   onOpenWallet,
   onOpenGuide,
+  mode,
+  onToggleMode,
 }: {
   authenticated: boolean;
   address?: string;
@@ -30,6 +32,8 @@ export default function Header({
   onCreateWallet: () => void;
   onOpenWallet: () => void;
   onOpenGuide: () => void;
+  mode: 'onchain' | 'offchain';
+  onToggleMode: () => void;
 }) {
   const [theme, setTheme] = useState<Theme>(readTheme);
 
@@ -60,23 +64,32 @@ export default function Header({
         >
           ?
         </button>
-        {!authenticated ? (
-          <button onClick={onLogin}>Log in</button>
-        ) : (
-          <>
-            {address ? (
-              <button className="addr-btn" onClick={onOpenWallet} title="Switch wallet">
-                {`${address.slice(0, 6)}…${address.slice(-4)}`}
-                <span className="caret">▾</span>
-              </button>
-            ) : needsWallet ? (
-              <button onClick={onCreateWallet} disabled={creatingWallet}>
-                {creatingWallet ? 'Creating…' : 'Create wallet'}
-              </button>
-            ) : null}
-            <button onClick={onLogout}>Log out</button>
-          </>
-        )}
+        <button
+          className="theme-toggle"
+          onClick={onToggleMode}
+          aria-label="Switch game mode"
+          title={mode === 'onchain' ? 'Try offchain demo' : 'Back to onchain game'}
+        >
+          {mode === 'onchain' ? '🎮 Offchain' : '⛓ Onchain'}
+        </button>
+        {mode === 'onchain' &&
+          (!authenticated ? (
+            <button onClick={onLogin}>Log in</button>
+          ) : (
+            <>
+              {address ? (
+                <button className="addr-btn" onClick={onOpenWallet} title="Switch wallet">
+                  {`${address.slice(0, 6)}…${address.slice(-4)}`}
+                  <span className="caret">▾</span>
+                </button>
+              ) : needsWallet ? (
+                <button onClick={onCreateWallet} disabled={creatingWallet}>
+                  {creatingWallet ? 'Creating…' : 'Create wallet'}
+                </button>
+              ) : null}
+              <button onClick={onLogout}>Log out</button>
+            </>
+          ))}
       </div>
     </header>
   );
