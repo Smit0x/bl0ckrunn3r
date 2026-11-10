@@ -445,6 +445,10 @@ export default function Game() {
   // "Claim winnings" button only shows when there's something to claim.
   useEffect(() => {
     loadClaimRounds();
+    // Retry shortly after so a just-finalized round (whose winner data the
+    // keeper writes a moment later) is picked up without waiting for the next round.
+    const t = setTimeout(loadClaimRounds, 4000);
+    return () => clearTimeout(t);
   }, [loadClaimRounds, roundId]);
 
   const openClaimModal = useCallback(async () => {

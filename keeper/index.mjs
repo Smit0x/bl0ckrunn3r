@@ -157,7 +157,6 @@ async function maybeRefreshHistory(roundId, status) {
   lastHistoryRoundId = roundId;
   lastHistoryStatus = status;
   await refreshHistory(roundId);
-  await refreshWinners(roundId);
 }
 
 let lastStreamCheck = 0;
@@ -266,6 +265,9 @@ async function tick() {
 
   // Refresh the history cache whenever a round starts or ends.
   await maybeRefreshHistory(roundId, status);
+  // Winners cache is incremental and cheap: run every tick so a just-finalized
+  // round is recorded before the next round becomes visible to the frontend.
+  await refreshWinners(roundId);
 }
 
 async function loop() {
