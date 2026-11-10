@@ -16,7 +16,6 @@ import DisclaimerModal from './DisclaimerModal';
 import Guide from './Guide';
 import GuideIntro from './GuideIntro';
 import LiveStream from './LiveStream';
-import SqueekStatus from './SqueekStatus';
 import Toasts from './Toasts';
 import type { ToastData } from './Toast';
 import hamsterGlasses from '../images/hamster_glasses_papers.png';
@@ -50,8 +49,6 @@ export default function Game() {
   const [roundId, setRoundId] = useState(0n);
   const [round, setRound] = useState<Round | null>(null);
   const [gamePaused, setGamePaused] = useState(false);
-  const [gracePeriod, setGracePeriod] = useState(0n);
-  const [owner, setOwner] = useState('');
   const [maxNumber, setMaxNumber] = useState(100n);
   const [numberInfo, setNumberInfo] = useState<Record<string, NumberInfo>>({});
   const [history, setHistory] = useState<HistoryRow[]>([]);
@@ -192,12 +189,10 @@ export default function Game() {
   const poll = useCallback(async () => {
     if (!isConfigured) return;
     try {
-      const [bsf, cid, paused, grace, own, maxN, block] = await Promise.all([
+      const [bsf, cid, paused, maxN, block] = await Promise.all([
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'blocksProducedSoFar' }),
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'currentRoundId' }),
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'gamePaused' }),
-        publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'gracePeriod' }),
-        publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'owner' }),
         publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'maxBetSpan' }),
         publicClient.getBlock({ blockTag: 'latest' }),
       ]);
@@ -214,8 +209,6 @@ export default function Game() {
       setBlocksSoFar(bsf);
       setRoundId(cid);
       setGamePaused(paused);
-      setGracePeriod(grace);
-      setOwner(own.toLowerCase());
       setMaxNumber(maxN);
 
       if (cid > 0n) {
@@ -485,17 +478,6 @@ export default function Game() {
     [authenticated, address, run, sendTx, loadClaimRounds, pushMessage],
   );
 
-  const ownerAction = useCallback(
-    async (fn: 'startRound' | 'finalize' | 'cancelRound') => {
-      await run(async () => {
-        const args = fn === 'startRound' ? [] : [roundId];
-        const hash = await sendTx(fn, args);
-        pushMessage(`${fn} sent: ${hash.slice(0, 12)}…`);
-      });
-    },
-    [roundId, run, sendTx, pushMessage],
-  );
-
   if (!ready)
     return (
       <div className="loading">
@@ -512,7 +494,6 @@ export default function Game() {
     );
   }
 
-  const isOwner = !!address && address.toLowerCase() === owner;
   const live = !!round && round.status === 1 && BigInt(now) < round.endTime;
   const bettingOpen = live && !gamePaused;
   const canBet = bettingOpen && authenticated;
@@ -545,8 +526,6 @@ export default function Game() {
         )}
       </div>
 
-      <SqueekStatus />
-
       <LiveStream />
 
       <Ladder max={maxNumber} info={numberInfo} blocksSoFar={blocksSoFar} active={live} disabled={busy || !canBet} onPick={openBetFor} />
@@ -558,19 +537,11 @@ export default function Game() {
 
       <BetDistribution info={numberInfo} blocksSoFar={blocksSoFar} pot={round?.pot} />
       <Controls
-        round={round}
-        roundId={roundId}
-        gracePeriod={gracePeriod}
-        now={now}
-        isOwner={isOwner}
         busy={busy}
         canBet={canBet}
         claimableCount={claimItems.length}
         onBet={openBet}
         onClaim={openClaimModal}
-        onStart={() => ownerAction('startRound')}
-        onFinalize={() => ownerAction('finalize')}
-        onCancel={() => ownerAction('cancelRound')}
       />
       {history.length > 0 && (
         <section className="history">
