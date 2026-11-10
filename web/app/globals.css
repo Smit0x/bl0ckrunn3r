@@ -1457,3 +1457,49 @@ button.active {
   background: var(--muted);
   animation: none;
 }
+
+.start-block {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.history {
+  margin-top: 20px;
+  border-top: 2px solid var(--border);
+  padding-top: 12px;
+}
+
+.history-title {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.history-table th,
+.history-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-table th {
+  color: var(--muted);
+}
+
+.status-finalized {
+  color: var(--green);
+}
+
+.status-cancelled {
+  color: var(--danger);
+}
+
+.status-betting {
+  color: var(--warn);
+}

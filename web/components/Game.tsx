@@ -46,6 +46,7 @@ export default function Game() {
   const [owner, setOwner] = useState('');
   const [maxNumber, setMaxNumber] = useState(100n);
   const [numberInfo, setNumberInfo] = useState<Record<string, NumberInfo>>({});
+  const [history, setHistory] = useState<{ id: number; round: Round }[]>([]);
   const [betOpen, setBetOpen] = useState(false);
   const [betNumber, setBetNumber] = useState<bigint | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -230,6 +231,41 @@ export default function Game() {
     const id = setInterval(poll, 2000);
     return () => clearInterval(id);
   }, [poll]);
+
+  // Load recent round history (last 20 rounds) whenever the round changes.
+  useEffect(() => {
+    if (!isConfigured || roundId === 0n) return;
+    let cancelled = false;
+    (async () => {
+      const count = Math.min(Number(roundId), 20);
+      const start = Math.max(1, Number(roundId) - count + 1);
+      const items: { id: number; round: Round }[] = [];
+      for (let i = Number(roundId); i >= start; i--) {
+        try {
+          const r = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'getRound', args: [BigInt(i)] });
+          items.push({
+            id: i,
+            round: {
+              startHeight: r[0],
+              endHeight: r[1],
+              result: r[2],
+              startTime: r[3],
+              endTime: r[4],
+              pot: r[5],
+              totalUserStake: r[6],
+              status: r[7],
+            },
+          });
+        } catch {
+          // skip unreadable rounds
+        }
+      }
+      if (!cancelled) setHistory(items);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [roundId, isConfigured]);
 
   const run = useCallback(async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -506,6 +542,7 @@ export default function Game() {
       <div className="ladder-head">
         <div className="round-counter">
           Round {roundId.toString()}
+          {round && <span className="start-block"> · Started at block {round.startHeight.toString()}</span>}
           {gamePaused && <span className="paused-badge">⏸️ Paused</span>}
         </div>
         {live && (
@@ -538,6 +575,35 @@ export default function Game() {
         onFinalize={() => ownerAction('finalize')}
         onCancel={() => ownerAction('cancelRound')}
       />
+      {history.length > 0 && (
+        <section className="history">
+          <h3 className="history-title">Round history</h3>
+          <table className="history-table">
+            <thead>
+              <tr>
+                <th>Round</th>
+                <th>Start block</th>
+                <th>End block</th>
+                <th>Blocks produced</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map(({ id, round: r }) => (
+                <tr key={id}>
+                  <td>{id}</td>
+                  <td>{r.startHeight.toString()}</td>
+                  <td>{r.status === 2 ? r.endHeight.toString() : '—'}</td>
+                  <td>{r.status === 2 ? r.result.toString() : '—'}</td>
+                  <td className={r.status === 2 ? 'status-finalized' : r.status === 3 ? 'status-cancelled' : 'status-betting'}>
+                    {r.status === 2 ? 'Finalized' : r.status === 3 ? 'Cancelled' : 'Betting'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
       <BetModal
         open={betOpen}
         initialNumber={betNumber}
