@@ -1,12 +1,15 @@
 'use client';
 
 import { Fragment, useEffect } from 'react';
+import { formatEther } from 'viem';
 import happyHamster from '../images/happyhamster.png';
 import hamsterCashFan from '../images/hamster_cash_fan.png';
 import loadingGif from '../images/loading.gif';
 
 export interface ClaimRoundItem {
   roundId: bigint;
+  amount: bigint;
+  numbers: bigint[];
 }
 
 export default function ClaimModal({
@@ -22,7 +25,7 @@ export default function ClaimModal({
   loading: boolean;
   claimingRound: bigint | null;
   onClose: () => void;
-  onClaim: (roundId: bigint) => void;
+  onClaim: (item: ClaimRoundItem) => void;
 }) {
   // Lock page scroll while open and close on Escape.
   useEffect(() => {
@@ -71,9 +74,9 @@ export default function ClaimModal({
                   <button
                     className="primary claim-btn"
                     disabled={claimingRound !== null}
-                    onClick={() => onClaim(it.roundId)}
+                    onClick={() => onClaim(it)}
                   >
-                    {claimingRound === it.roundId ? 'Claiming…' : 'Claim winnings'}
+                    {claimingRound === it.roundId ? 'Claiming…' : `Claim ${formatEther(it.amount)} ETH`}
                   </button>
                 </div>
               </div>

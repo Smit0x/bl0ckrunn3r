@@ -409,46 +409,37 @@ export default function Game() {
     [submitBet],
   );
 
-  // Build the list of rounds (1..currentRoundId) and whether the connected
-  // wallet still has claimable winnings in each. A number is claimable when the
-  // wallet's stake on it is non-zero AND its distance from the round result is
-  // one of the winning distances (tierReward > 0).
+  // Fetch claimable rounds from the keeper's API. The VPS reads userStake
+  // server-side, so the browser never scans the chain for this.
   const loadClaimRounds = useCallback(async () => {
     if (!address) {
       setClaimItems([]);
       return;
     }
-    const items: ClaimRoundItem[] = [];
-    for (let i = 1n; i <= roundId; i++) {
-      try {
-        const r = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'getRound', args: [i] });
-        const status = Number(r[7]);
-        if (status === 2) {
-          const result = r[2] as bigint;
-          const active = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'getActiveNumbers', args: [i] });
-          for (const n of active) {
-            const s = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'userStake', args: [i, address, n] });
-            if (s <= 0n) continue;
-            const d = n > result ? n - result : result - n;
-            const reward = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'tierReward', args: [i, d] });
-            if (reward > 0n) {
-              items.push({ roundId: i });
-              break;
-            }
-          }
-        }
-      } catch {
-        // Ignore per-round read failures; skip the round.
+    try {
+      const res = await fetch(`/api/claimable?address=${address}`, { cache: 'no-store' });
+      if (!res.ok) {
+        setClaimItems([]);
+        return;
       }
+      const data = (await res.json()) as { roundId: number; amount: string; numbers: number[] }[];
+      setClaimItems(
+        data.map((d) => ({
+          roundId: BigInt(d.roundId),
+          amount: BigInt(d.amount),
+          numbers: d.numbers.map((n) => BigInt(n)),
+        })),
+      );
+    } catch {
+      setClaimItems([]);
     }
-    setClaimItems(items);
-  }, [address, roundId]);
+  }, [address]);
 
   // Refresh the claim list whenever the wallet or round changes, so the
   // "Claim winnings" button only shows when there's something to claim.
   useEffect(() => {
     loadClaimRounds();
-  }, [loadClaimRounds]);
+  }, [loadClaimRounds, roundId]);
 
   const openClaimModal = useCallback(async () => {
     if (!authenticated || !address) {
@@ -465,30 +456,15 @@ export default function Game() {
   }, [authenticated, address, loadClaimRounds, pushMessage]);
 
   const claimRound = useCallback(
-    async (roundIdToClaim: bigint) => {
+    async (item: ClaimRoundItem) => {
       if (!authenticated || !address) {
         pushMessage('Log in first');
         return;
       }
       await run(async () => {
-        const r = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'getRound', args: [roundIdToClaim] });
-        const result = r[2] as bigint;
-        const active = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'getActiveNumbers', args: [roundIdToClaim] });
-        const mine: bigint[] = [];
-        for (const n of active) {
-          const s = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'userStake', args: [roundIdToClaim, address, n] });
-          if (s <= 0n) continue;
-          const d = n > result ? n - result : result - n;
-          const reward = await publicClient.readContract({ address: PREDICT_ADDRESS, abi: predictAbi, functionName: 'tierReward', args: [roundIdToClaim, d] });
-          if (reward > 0n) mine.push(n);
-        }
-        if (mine.length === 0) {
-          pushMessage('Nothing to claim');
-          return;
-        }
-        setClaimingRound(roundIdToClaim);
+        setClaimingRound(item.roundId);
         try {
-          const hash = await sendTx('claim', [roundIdToClaim, mine]);
+          const hash = await sendTx('claim', [item.roundId, item.numbers]);
           pushMessage(`Claim sent: ${hash.slice(0, 12)}…`);
           await loadClaimRounds();
         } finally {

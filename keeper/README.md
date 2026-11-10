@@ -59,13 +59,19 @@ pm2 start ecosystem.config.cjs
 pm2 save && pm2 startup
 ```
 
-## History API (read-only cache)
+## History + Claimable API (read-only caches)
 
-The keeper writes `history.json` (the latest 20 rounds) every time a round starts or ends. A tiny HTTP server (`api.mjs`, run by PM2 as `squeek-history-api`) serves it:
+The keeper writes two caches every time a round starts or ends:
+
+- `history.json` — the latest 20 rounds (for the UI table).
+- `winners.json` — the **complete** list of finalized rounds' winning tiers (`result`, `winningDistances`, `tierReward`, `distanceTotalStake`), backfilled incrementally.
+
+A tiny HTTP server (`api.mjs`, run by PM2 as `squeek-history-api`) serves them:
 
 - `GET /history` → JSON array of the latest 20 rounds: `[{ "id", "startHeight", "endHeight", "result", "status" }]`
+- `GET /claimable?address=0x…` → `[{ "roundId", "amount", "numbers" }]` of what that wallet can still claim (the VPS reads `userStake` server-side)
 - `GET /health` → `ok`
 
-Only the keeper hits the RPC. The web app's `/api/history` route (Vercel) proxies to `GET http://<vps-ip>:3001/history`, so user browsers never touch the RPC directly. Open TCP port `3001` in the VPS firewall, and set `HISTORY_API_URL=http://<vps-ip>:3001` (server-only, no `NEXT_PUBLIC_` prefix) in Vercel.
+Only the keeper + API hit the RPC. The web app's `/api/history` and `/api/claimable` routes (Vercel) proxy to `http://<vps-ip>:3001/...`, so user browsers never touch the RPC directly. Open TCP port `3001` in the VPS firewall, and set `HISTORY_API_URL=http://<vps-ip>:3001` (server-only, no `NEXT_PUBLIC_` prefix) in Vercel.
 
 

@@ -13,6 +13,7 @@ import 'dotenv/config';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HISTORY_FILE = join(__dirname, 'history.json');
+const WINNERS_FILE = join(__dirname, 'winners.json');
 const HISTORY_LIMIT = 20;
 
 const RPC_URL = process.env.RPC_URL;
@@ -39,6 +40,9 @@ const predictAbi = parseAbi([
   'function gracePeriod() view returns (uint256)',
   'function settleWindow() view returns (uint256)',
   'function getRound(uint256) view returns ((uint256,uint256,uint256,uint64,uint64,uint256,uint256,uint8))',
+  'function getWinningDistances(uint256) view returns (uint256[])',
+  'function tierReward(uint256,uint256) view returns (uint256)',
+  'function distanceTotalStake(uint256,uint256) view returns (uint256)',
   'function startRound()',
   'function finalize(uint256 roundId)',
   'function cancelRound(uint256 roundId)',
@@ -94,11 +98,66 @@ async function refreshHistory(roundId) {
   console.log(`[${new Date().toISOString()}] history updated (${rows.length} rounds)`);
 }
 
+// ---- winners cache (complete list of finalized rounds' winning tiers) ----
+function loadWinners() {
+  try {
+    const data = JSON.parse(readFileSync(WINNERS_FILE, 'utf8'));
+    return {
+      lastScannedId: Number(data?.lastScannedId || 0),
+      winners: Array.isArray(data?.winners) ? data.winners : [],
+    };
+  } catch {
+    return { lastScannedId: 0, winners: [] };
+  }
+}
+
+function saveWinners(data) {
+  const tmp = `${WINNERS_FILE}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data));
+  renameSync(tmp, WINNERS_FILE);
+}
+
+async function readWinnerData(id, result) {
+  const dists = await publicClient.readContract({ ...P, functionName: 'getWinningDistances', args: [BigInt(id)] });
+  const winningDistances = [];
+  const tierReward = [];
+  const distanceTotalStake = [];
+  for (const d of dists) {
+    const tr = await publicClient.readContract({ ...P, functionName: 'tierReward', args: [BigInt(id), d] });
+    const ds = await publicClient.readContract({ ...P, functionName: 'distanceTotalStake', args: [BigInt(id), d] });
+    winningDistances.push(Number(d));
+    tierReward.push(tr.toString());
+    distanceTotalStake.push(ds.toString());
+  }
+  return { id, result, winningDistances, tierReward, distanceTotalStake };
+}
+
+async function refreshWinners(roundId) {
+  const data = loadWinners();
+  const target = Number(roundId);
+  let i = data.lastScannedId + 1;
+  for (; i <= target; i++) {
+    try {
+      const r = await publicClient.readContract({ ...P, functionName: 'getRound', args: [BigInt(i)] });
+      const status = r[7];
+      if (status === 1) break; // current round still betting; revisit next refresh
+      if (status === 2) {
+        data.winners.push(await readWinnerData(i, Number(r[2])));
+      }
+      data.lastScannedId = i; // finalized (2) or cancelled (3): done scanning this round
+    } catch {
+      break; // transient read error; retry next refresh
+    }
+  }
+  saveWinners(data);
+}
+
 async function maybeRefreshHistory(roundId, status) {
   if (roundId === lastHistoryRoundId && status === lastHistoryStatus) return;
   lastHistoryRoundId = roundId;
   lastHistoryStatus = status;
   await refreshHistory(roundId);
+  await refreshWinners(roundId);
 }
 
 let lastStreamCheck = 0;
